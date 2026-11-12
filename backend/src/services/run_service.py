@@ -6,8 +6,7 @@ from ..models.dataset import MeterDataset
 from ..models.window import OperatingWindow
 from ..utils.queue import enqueue
 from .readings import normalize
-from .change_points import detect
-from .robust_scores import score
+from .analysis import run_analysis
 
 def create(db,body):
  if not db.get(ChangeStudy,body.study_id):raise HTTPException(422,"研究不存在")
@@ -23,11 +22,9 @@ def compute(db,run_id):
  row.status="running";db.commit()
  try:
   study=db.get(ChangeStudy,row.study_id);dataset=db.get(MeterDataset,study.dataset_id);window=db.get(OperatingWindow,study.window_id)
-  observations,excluded=normalize(dataset.readings,window.start_at,window.end_at);values=[r["intensity"] for r in observations];config=study.config
-  changes=detect(values,config["penalty"],config["min_segment"]);robust=score(values,changes["segments"],config["anomaly_threshold"],config["noise_floor"])
-  for segment in changes["segments"]:
-   segment["start_at"]=observations[segment["start_index"]]["timestamp"];segment["end_at"]=observations[segment["end_index"]-1]["timestamp"]
-  for index,obs in enumerate(observations):obs.update(score=robust["scores"][index],baseline=robust["baselines"][index],anomaly=index in robust["anomaly_indices"])
-  row.result={"observations":observations,"excluded":excluded,"changes":changes,"robust":robust,"valid_count":len(observations),"excluded_count":len(excluded),"anomaly_count":len(robust["anomaly_indices"]),"dataset_name":dataset.name,"window_name":window.name,"config":config};row.status="completed"
+  observations,excluded=normalize(dataset.readings,window.start_at,window.end_at)
+  result=run_analysis(observations,excluded,study.config)
+  result.update(dataset_name=dataset.name,window_name=window.name)
+  row.result=result;row.status="completed"
  except Exception as e:row.status="failed";row.error=str(e)[:1000]
  db.commit()
